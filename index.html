@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Skyward ZigZag</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        /* === RESET & PREMIUM MOBILE OPTIMIZATIONS === */
+        :root {
+            --sky: #8DE3FE;
+            --ui-bg: rgba(255, 255, 255, 0.92);
+            --text-dark: #2C3E50;
+            --text-light: #7F8C8D;
+            --accent: #FF8B94;
+            --accent-dark: #FF727D;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0; padding: 0;
+            user-select: none; -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body, html {
+            width: 100%; height: 100%;
+            overflow: hidden;
+            background-color: var(--sky);
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            touch-action: none; 
+            overscroll-behavior: none;
+        }
+
+        #game-canvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+        }
+
+        /* === CLEAN APPLE-STYLE UI === */
+        #ui-layer {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 10;
+            pointer-events: none; /* Let touches pass through to the game */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #hud {
+            position: absolute;
+            top: max(24px, env(safe-area-inset-top));
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .score-pill {
+            background: #FFFFFF;
+            padding: 12px 36px;
+            border-radius: 100px;
+            font-size: 32px;
+            font-weight: 900;
+            color: var(--accent);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.08);
+            transform: scale(1);
+            transition: transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .screen {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto; /* Catch clicks for buttons */
+            transition: opacity 0.4s ease;
+        }
+
+        .hidden {
+            opacity: 0;
+            pointer-events: none !important;
+        }
+
+        .card {
+            background: var(--ui-bg);
+            backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+            padding: 48px 45px;
+            border-radius: 40px;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            max-width: 85%;
+            width: 340px;
+            transform: translateY(0) scale(1);
+            transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .hidden .card {
+            transform: translateY(30px) scale(0.9);
+        }
+
+        h1 {
+            color: var(--text-dark);
+            font-size: 38px;
+            font-weight: 900;
+            letter-spacing: -1px;
+            margin-bottom: 16px;
+        }
+
+        p {
+            color: var(--text-light);
+            font-size: 18px;
+            font-weight: 600;
+            line-height: 1.5;
+            margin-bottom: 35px;
+        }
+
+        .score-highlight {
+            display: block;
+            font-size: 52px;
+            color: var(--accent);
+            font-weight: 900;
+            margin-top: 8px;
+        }
+
+        button {
+            background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+            color: white;
+            border: none;
+            padding: 20px 0;
+            width: 100%;
+            border-radius: 100px;
+            font-size: 22px;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+            box-shadow: 0 12px 25px rgba(255, 139, 148, 0.35);
+            cursor: pointer;
+            outline: none;
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+
+        button:active {
+            transform: scale(0.95) translateY(2px);
+            box-shadow: 0 4px 12px rgba(255, 139, 148, 0.25);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-canvas"></div>
+
+    <div id="ui-layer">
+        
+        <div id="hud" class="hidden">
+            <div class="score-pill" id="score-ui">0</div>
+        </div>
+
+        <div id="start-screen" class="screen">
+            <div class="card">
+                <h1>Skyward</h1>
+                <p>Tap anywhere to turn.<br>Stay on the blocks!</p>
+                <button id="btn-play">PLAY NOW</button>
+            </div>
+        </div>
+
+        <div id="game-over-screen" class="screen hidden">
+            <div class="card">
+                <h1>Oops!</h1>
+                <p>You scored <span class="score-highlight" id="final-score">0</span></p>
+                <button id="btn-retry">PLAY AGAIN</button>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        /**
+         * SKYWARD ZIGZAG - PREMIUM MOBILE RUNNER
+         * Architecture: Single Core Loop, Strict Object Pooling, Delta-Time Physics.
+         */
+
+        // --- 1. CONFIGURATION & CONSTANTS ---
+        const CONFIG = {
+            colors: {
+                sky: 0x8DE3FE,         // Vibrant cyan sky
+                blockTop1: 0xA8E6CF,   // Pastel green top
+                blockTop2: 0x9EE0C5,   // Darker pastel green top (checkerboard)
+                blockSide: 0xFFD3B6,   // Warm peach dirt sides
+                player: 0xFF8B94,      // Warm coral jelly
+                eye: 0x2C3E50,         // Dark slate eyes
+                gem: 0xFFDE7D,         // Sunny gold
+                cloud: 0xFFFFFF,       // Pure white
+                treeLeaves: 0xDCEDC1,  // Pale green foliage
+                treeTrunk: 0xFFAAA5    // Warm pink-brown trunk
+            },
+            physics: {
+                baseSpeed: 7.0,
+                maxSpeed: 16.0,
+                accel: 0.08,
+                blockSize: 3.0,
+                coyoteTolerance: 2.2,  // Forgiving block edge detection
+                snapSpeed: 18.0        // Magnetic auto-centering speed
+            }
+        };
+
+        // --- 2. GLOBAL STATE ---
+        let scene, camera, renderer, dirLight, clock;
+        let gameState = 'START'; // START, PLAYING, GAMEOVER
+        let score = 0;
+        let speed = CONFIG.physics.baseSpeed;
+
+        let playerGroup, playerMesh;
+        let moveDir = { x: 1, z: 0 }; // Starts moving down +X axis
+        let targetRot = 0;            // Target rotation for mesh
+        let bouncePhase = 0;
+
+        // Path Generation state
+        let lastBlockX = 0;
+        let lastBlockZ = 0;
+        let pathCount = 0;
+
+        // Object Pools (Strict memory management)
+        const pools = { blocks: [], gems: [], particles: [], trees: [], clouds: [] };
+        const active = { blocks: [], gems: [], particles: [], trees: [], clouds: [] };
+
+        // DOM Handles
+        const uiScore = document.getElementById('score-ui');
+        const hud = document.getElementById('hud');
+        const startScreen = document.getElementById('start-screen');
+        const overScreen = document.getElementById('game-over-screen');
+        const finalScore = document.getElementById('final-score');
+
+        // --- 3. GEOMETRIES & MATERIALS (Pre-instantiated) ---
+        const geoBlock = new THREE.BoxGeometry(CONFIG.physics.blockSize, 2, CONFIG.physics.blockSize);
+        const matTop1 = new THREE.MeshLambertMaterial({ color: CONFIG.colors.blockTop1, flatShading: true });
+        const matTop2 = new THREE.MeshLambertMaterial({ color: CONFIG.colors.blockTop2, flatShading: true });
+        const matSide = new THREE.MeshLambertMaterial({ color: CONFIG.colors.blockSide, flatShading: true });
+        
+        // Material Arrays: [Right, Left, Top, Bottom, Front, Back]
+        const matArray1 = [matSide, matSide, matTop1, matSide, matSide, matSide];
+        const matArray2 = [matSide, matSide, matTop2, matSide, matSide, matSide];
+
+        const geoGem = new THREE.OctahedronGeometry(0.5);
+        const matGem = new THREE.MeshLambertMaterial({ color: CONFIG.colors.gem, emissive: CONFIG.colors.gem, emissiveIntensity: 0.3, flatShading: true });
+
+        const geoParticle = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+
+        // --- 4. ENGINE INITIALIZATION ---
+        function init() {
+            const container = document.getElementById('game-canvas');
+            clock = new THREE.Clock();
+
+            // Scene setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(CONFIG.colors.sky);
+            scene.fog = new THREE.Fog(CONFIG.colors.sky, 30, 80); // Seamless horizon blend
+
+            // Monument Valley-style Orthographic Camera
+            const aspect = window.innerWidth / window.innerHeight;
+            const f = window.innerWidth < 600 ? 30 : 22; // Dynamic FOV for mobile
+            camera = new THREE.OrthographicCamera(-f*aspect/2, f*aspect/2, f/2, -f/2, 1, 150);
+            camera.position.set(20, 25, 20); // Isometric top-down angle
+            camera.lookAt(0, 0, 0);
+
+            // Renderer setup
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // High-DPI balancing
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.outputEncoding = THREE.sRGBEncoding; // Vital for vibrant pastel colors
+            container.appendChild(renderer.domElement);
+
+            // Warm, soft lighting
+            const hemiLight = new THREE.HemisphereLight(0xffffff, CONFIG.colors.sky, 0.65);
+            scene.add(hemiLight);
+
+            dirLight = new THREE.DirectionalLight(0xFFF8E7, 0.85); // Warm sun
+            dirLight.castShadow = true;
+            dirLight.shadow.mapSize.width = 1024;
+            dirLight.shadow.mapSize.height = 1024;
+            dirLight.shadow.camera.left = -25; dirLight.shadow.camera.right = 25;
+            dirLight.shadow.camera.top = 25; dirLight.shadow.camera.bottom = -25;
+            dirLight.shadow.camera.near = 0.5; dirLight.shadow.camera.far = 100;
+            dirLight.shadow.bias = -0.001;
+            scene.add(dirLight);
+            scene.add(dirLight.target);
+
+            // Construct World
+            buildPlayer();
+            buildScenery(); // Pre-warm backgrounds
+
+            // Listeners
+            window.addEventListener('resize', onResize);
+            window.addEventListener('pointerdown', handleInput, { passive: false });
+            document.getElementById('btn-play').addEventListener('click', (e) => { e.stopPropagation(); resetGame(); });
+            document.getElementById('btn-retry').addEventListener('click', (e) => { e.stopPropagation(); resetGame(); });
+
+            resetGame(); // Generates initial path
+            animate();
+        }
+
+        // --- 5. ENTITY CONSTRUCTION ---
+        function buildPlayer() {
+            playerGroup = new THREE.Group();
+            
+            const geoBody = new THREE.SphereGeometry(0.8, 32, 32);
+            const matBody = new THREE.MeshLambertMaterial({ color: CONFIG.colors.player });
+            playerMesh = new THREE.Mesh(geoBody, matBody);
+            playerMesh.castShadow = true;
+            playerMesh.receiveShadow = true;
+            playerGroup.add(playerMesh);
+
+            // Friendly Dot Eyes (Facing +X)
+            const geoEye = new THREE.SphereGeometry(0.12, 16, 16);
+            const matEye = new THREE.MeshBasicMaterial({ color: CONFIG.colors.eye });
+            const eyeL = new THREE.Mesh(geoEye, matEye); eyeL.position.set(0.65, 0.2, 0.35);
+            const eyeR = new THREE.Mesh(geoEye, matEye); eyeR.position.set(0.65, 0.2, -0.35);
+            playerMesh.add(eyeL, eyeR);
+
+            // Logic vars
+            playerGroup.userData = { targetX: null, targetZ: null };
+            scene.add(playerGroup);
+        }
+
+        function createTree() {
+            const group = new THREE.Group();
+            const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.3, 1.2, 5), new THREE.MeshLambertMaterial({ color: CONFIG.colors.treeTrunk, flatShading: true }));
+            trunk.position.y = 0.6; trunk.castShadow = true;
+            const leaves = new THREE.Mesh(new THREE.ConeGeometry(1.4, 2.5, 6), new THREE.MeshLambertMaterial({ color: CONFIG.colors.treeLeaves, flatShading: true }));
+            leaves.position.y = 2.0; leaves.castShadow = true;
+            group.add(trunk, leaves);
+            scene.add(group);
+            return group;
+        }
+
+        function buildScenery() {
+            // Fluffy clouds beneath the path
+            const geoCloud = new THREE.BoxGeometry(2, 2, 2);
+            const matCloud = new THREE.MeshLambertMaterial({ color: CONFIG.colors.cloud, flatShading: true });
+            
+            for(let i=0; i<15; i++) {
+                const cloud = new THREE.Group();
+                const m1 = new THREE.Mesh(geoCloud, matCloud);
+                const m2 = new THREE.Mesh(geoCloud, matCloud); m2.position.set(1.5, -0.5, 0); m2.scale.setScalar(0.7);
+                const m3 = new THREE.Mesh(geoCloud, matCloud); m3.position.set(-1.5, -0.2, 0.5); m3.scale.setScalar(0.8);
+                cloud.add(m1, m2, m3);
+                
+                cloud.position.set((Math.random()-0.5)*120, -10 - Math.random()*8, (Math.random()-0.5)*120);
+                cloud.scale.setScalar(1.5 + Math.random()*1.5);
+                scene.add(cloud);
+                active.clouds.push(cloud);
+            }
+        }
+
+        // --- 6. MEMORY POOLING & GENERATION ---
+        function getFromPool(poolArray, createFn) {
+            if (poolArray.length > 0) {
+                let item = poolArray.pop();
+                item.visible = true;
+                return item;
+            }
+            return createFn();
+        }
+
+        function returnToPool(poolArray, activeArray, index) {
+            let item = activeArray[index];
+            item.visible = false;
+            poolArray.push(item);
+            activeArray.splice(index, 1);
+        }
+
+        function spawnPathBlock(x, z, isSafeZone = false) {
+            let b = getFromPool(pools.blocks, () => {
+                let m = new THREE.Mesh(geoBlock, matArray1);
+                m.receiveShadow = true; m.castShadow = true;
+                scene.add(m); return m;
+            });
+
+            b.material = (pathCount % 2 === 0) ? matArray1 : matArray2;
+            b.position.set(x, -1, z); // Top is at Y=0
+            b.scale.set(1, 1, 1);
+            
+            if (isSafeZone) {
+                b.scale.set(1.5, 1, 1.5); // Wider starting area
+            } else {
+                // 15% Gem Spawn
+                if (Math.random() > 0.85) {
+                    let gem = getFromPool(pools.gems, () => { let m = new THREE.Mesh(geoGem, matGem); m.castShadow = true; scene.add(m); return m; });
+                    gem.position.set(x, 1.2, z); gem.userData.baseY = 1.2;
+                    active.gems.push(gem);
+                }
+                
+                // 50% Tree Spawn (Placed aesthetically to the side)
+                if (Math.random() > 0.5) {
+                    let tree = getFromPool(pools.trees, createTree);
+                    let offsetX = (Math.random() > 0.5 ? 1 : -1) * (2.5 + Math.random()*2);
+                    let offsetZ = (Math.random() > 0.5 ? 1 : -1) * (2.5 + Math.random()*2);
+                    tree.position.set(x + offsetX, -2.5 + Math.random()*0.5, z + offsetZ);
+                    active.trees.push(tree);
+                }
+            }
+            active.blocks.push(b);
+            pathCount++;
+        }
+
+        function generatePathAhead() {
+            // Procedurally strictly increment X or Z
+            if (Math.random() > 0.5) { lastBlockX += CONFIG.physics.blockSize; } 
+            else { lastBlockZ += CONFIG.physics.blockSize; }
+            spawnPathBlock(lastBlockX, lastBlockZ);
+        }
+
+        function spawnParticles(pos, colorHex, count) {
+            const mat = new THREE.MeshBasicMaterial({ color: colorHex });
+            for(let i=0; i<count; i++) {
+                let p = getFromPool(pools.particles, () => { let m = new THREE.Mesh(geoParticle, mat); scene.add(m); return m; });
+                p.material = mat; p.position.copy(pos);
+                p.userData = { vel: new THREE.Vector3((Math.random()-0.5)*15, Math.random()*12+6, (Math.random()-0.5)*15), life: 1.0 };
+                active.particles.push(p);
+            }
+        }
+
+        // --- 7. GAME STATE LOGIC ---
+        function resetGame() {
+            // Clear environment
+            while(active.blocks.length > 0) returnToPool(pools.blocks, active.blocks, 0);
+            while(active.gems.length > 0) returnToPool(pools.gems, active.gems, 0);
+            while(active.trees.length > 0) returnToPool(pools.trees, active.trees, 0);
+            while(active.particles.length > 0) returnToPool(pools.particles, active.particles, 0);
+
+            // Reset variables
+            lastBlockX = 0; lastBlockZ = 0; pathCount = 0;
+            score = 0; speed = CONFIG.physics.baseSpeed;
+            moveDir = { x: 1, z: 0 }; targetRot = 0; bouncePhase = 0;
+            uiScore.innerText = score;
+
+            // Generate initial runway
+            for(let i=0; i<4; i++) { spawnPathBlock(lastBlockX, lastBlockZ, true); lastBlockX += CONFIG.physics.blockSize; }
+            for(let i=0; i<30; i++) { generatePathAhead(); }
+
+            // Reset Player
+            playerGroup.position.set(0, 0.8, 0);
+            playerGroup.scale.set(1, 1, 1);
+            playerMesh.rotation.set(0, 0, 0);
+            playerGroup.userData.targetX = null; playerGroup.userData.targetZ = null;
+
+            // Instantly snap camera back
+            camera.position.set(15, 25, 15);
+
+            // UI Swaps
+            startScreen.classList.add('hidden');
+            overScreen.classList.add('hidden');
+            hud.classList.remove('hidden');
+            gameState = 'PLAYING';
+        }
+
+        function triggerDeath() {
+            if (gameState === 'GAMEOVER') return;
+            gameState = 'GAMEOVER';
+            
+            spawnParticles(playerGroup.position, CONFIG.colors.player, 25);
+            
+            setTimeout(() => {
+                hud.classList.add('hidden');
+                finalScore.innerText = score;
+                overScreen.classList.remove('hidden');
+            }, 1000); // Allow player to watch themselves fall
+        }
+
+        function bumpScore(points) {
+            score += points;
+            uiScore.innerText = score;
+            uiScore.style.transform = 'scale(1.2)';
+            setTimeout(() => uiScore.style.transform = 'scale(1)', 150);
+        }
+
+        // --- 8. INPUT CONTROLS ---
+        function handleInput(e) {
+            // Prevent interference with UI clicks
+            if (e.target.closest('.card') || e.target.tagName === 'BUTTON') return;
+            if (e) e.preventDefault();
+
+            if (gameState === 'PLAYING') {
+                // Change Direction cleanly
+                if (moveDir.x > 0) { moveDir.x = 0; moveDir.z = 1; targetRot = -Math.PI / 2; } 
+                else { moveDir.x = 1; moveDir.z = 0; targetRot = 0; }
+
+                // MAGNETIC GRID SNAPPING: Finds the block underneath and guarantees perfect alignment
+                let closest = null, minD = Infinity;
+                for (let b of active.blocks) {
+                    let d = b.position.distanceTo(playerGroup.position);
+                    if (d < minD) { minD = d; closest = b; }
+                }
+                
+                if (closest) {
+                    if (moveDir.x > 0) { playerGroup.userData.targetZ = closest.position.z; playerGroup.userData.targetX = null; } 
+                    else { playerGroup.userData.targetX = closest.position.x; playerGroup.userData.targetZ = null; }
+                }
+
+                speed = Math.min(CONFIG.physics.maxSpeed, speed + CONFIG.physics.accel); // Ramp difficulty
+                playerMesh.scale.set(1.4, 0.6, 1.4); // Juice: Squash on tap
+            }
+        }
+
+        // --- 9. RESIZE HANDLING ---
+        function onResize() {
+            const aspect = window.innerWidth / window.innerHeight;
+            const f = window.innerWidth < 600 ? 30 : 22; // Keep gameplay area readable on phones
+            camera.left = -f*aspect/2; camera.right = f*aspect/2;
+            camera.top = f/2; camera.bottom = -f/2;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- 10. MAIN RENDER LOOP ---
+        function animate() {
+            requestAnimationFrame(animate);
+            let dt = Math.min(clock.getDelta(), 0.1); // Cap lag jumps to 100ms
+            let time = clock.getElapsedTime();
+
+            if (gameState === 'START') {
+                playerGroup.position.y = 0.8 + Math.abs(Math.sin(time * 3)) * 0.5; // Idle floating
+            } 
+            else if (gameState === 'PLAYING') {
+                
+                // 1. Core Movement
+                playerGroup.position.x += moveDir.x * speed * dt;
+                playerGroup.position.z += moveDir.z * speed * dt;
+
+                // 2. Magnetic Grid Lerping (Corrects player drift instantly)
+                if (playerGroup.userData.targetX !== null) { playerGroup.position.x += (playerGroup.userData.targetX - playerGroup.position.x) * CONFIG.physics.snapSpeed * dt; }
+                if (playerGroup.userData.targetZ !== null) { playerGroup.position.z += (playerGroup.userData.targetZ - playerGroup.position.z) * CONFIG.physics.snapSpeed * dt; }
+
+                // 3. Smooth Rotation & Rolling
+                let rDiff = targetRot - playerMesh.rotation.y;
+                rDiff = Math.atan2(Math.sin(rDiff), Math.cos(rDiff));
+                playerMesh.rotation.y += rDiff * 15 * dt;
+
+                if (moveDir.x > 0) playerMesh.rotation.z -= speed * dt * 0.7;
+                else playerMesh.rotation.x += speed * dt * 0.7;
+
+                // 4. Bouncing Math
+                let travelDist = moveDir.x > 0 ? playerGroup.position.x : playerGroup.position.z;
+                playerGroup.position.y = 0.8 + Math.abs(Math.sin(travelDist * 1.5)) * 0.6;
+                playerMesh.scale.lerp(new THREE.Vector3(1, 1, 1), dt * 10); // Recover from squash
+
+                // 5. Collision & Coyote Time
+                let isSafe = false;
+                for (let b of active.blocks) {
+                    if (Math.abs(playerGroup.position.x - b.position.x) <= CONFIG.physics.coyoteTolerance &&
+                        Math.abs(playerGroup.position.z - b.position.z) <= CONFIG.physics.coyoteTolerance) {
+                        isSafe = true; break;
+                    }
+                }
+                if (!isSafe) triggerDeath();
+
+                // 6. Object Culling & Regeneration
+                if (active.blocks.length > 0) {
+                    let oldest = active.blocks[0];
+                    if (oldest.position.distanceTo(playerGroup.position) > 25 &&
+                       ((moveDir.x > 0 && oldest.position.x < playerGroup.position.x - 5) || 
+                        (moveDir.z > 0 && oldest.position.z < playerGroup.position.z - 5))) {
+                        returnToPool(pools.blocks, active.blocks, 0);
+                        bumpScore(1);
+                        generatePathAhead();
+                    }
+                }
+
+                // 7. Gem Interaction
+                for (let i = active.gems.length - 1; i >= 0; i--) {
+                    let g = active.gems[i];
+                    g.rotation.y += dt * 3;
+                    g.position.y = g.userData.baseY + Math.sin(time * 4 + g.position.x) * 0.2; // Hover
+                    
+                    if (playerGroup.position.distanceTo(g.position) < 1.8) {
+                        bumpScore(5);
+                        spawnParticles(g.position, CONFIG.colors.gem, 12);
+                        returnToPool(pools.gems, active.gems, i);
+                    } else if (g.position.distanceTo(playerGroup.position) > 35) {
+                        returnToPool(pools.gems, active.gems, i); // Pass safely
+                    }
+                }
+
+                // 8. Tree Garbage Collection
+                for (let i = active.trees.length - 1; i >= 0; i--) {
+                    let t = active.trees[i];
+                    if (t.position.distanceTo(playerGroup.position) > 40 &&
+                       ((moveDir.x > 0 && t.position.x < playerGroup.position.x - 10) || 
+                        (moveDir.z > 0 && t.position.z < playerGroup.position.z - 10))) {
+                        returnToPool(pools.trees, active.trees, i);
+                    }
+                }
+            } 
+            else if (gameState === 'GAMEOVER') {
+                // Fair Death Animation - Clear visual feedback of falling
+                playerGroup.position.y -= 25 * dt;
+                playerMesh.rotation.x += 15 * dt;
+                playerMesh.rotation.z += 12 * dt;
+                playerGroup.scale.multiplyScalar(Math.max(0, 1 - 2.5 * dt));
+            }
+
+            // --- GLOBAL PHYSICS & RENDER ALGORITHMS ---
+
+            // Particles
+            for (let i = active.particles.length - 1; i >= 0; i--) {
+                let p = active.particles[i];
+                p.userData.life -= dt * 1.5;
+                if (p.userData.life <= 0) { returnToPool(pools.particles, active.particles, i); } 
+                else {
+                    p.userData.vel.y -= 35 * dt; // Gravity
+                    p.position.addScaledVector(p.userData.vel, dt);
+                    p.scale.setScalar(Math.max(0, p.userData.life));
+                    p.rotation.x += dt * 8; p.rotation.y += dt * 8;
+                }
+            }
+
+            // Decorative Clouds (Infinite looping)
+            active.clouds.forEach(c => {
+                c.position.x += dt * 1.5;
+                if (c.position.x > camera.position.x + 60) c.position.x = camera.position.x - 60;
+                if (c.position.z > camera.position.z + 60) c.position.z = camera.position.z - 60;
+                if (c.position.x < camera.position.x - 60) c.position.x = camera.position.x + 60;
+                if (c.position.z < camera.position.z - 60) c.position.z = camera.position.z + 60;
+            });
+
+            // Smooth Monument Valley Camera Tracking
+            let targetX = playerGroup.position.x + 15;
+            let targetZ = playerGroup.position.z + 15;
+            camera.position.x += (targetX - camera.position.x) * dt * 5;
+            camera.position.z += (targetZ - camera.position.z) * dt * 5;
+
+            // Shadow Bounds Tracking (Locks precise resolution perfectly on player)
+            dirLight.position.set(camera.position.x - 15, 25, camera.position.z - 15);
+            dirLight.target.position.set(camera.position.x - 15, 0, camera.position.z - 15);
+            dirLight.target.updateMatrixWorld();
+
+            renderer.render(scene, camera);
+        }
+
+        // --- BOOT ---
+        window.onload = init;
+
+    </script>
+</body>
+</html>
